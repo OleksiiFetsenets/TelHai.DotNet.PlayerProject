@@ -7,7 +7,6 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using TelHai.DotNet.PlayerProject.Models;
 
 namespace TelHai.DotNet.PlayerProject
 {
@@ -178,7 +177,8 @@ namespace TelHai.DotNet.PlayerProject
         {
             try
             {
-                string json = JsonSerializer.Serialize(library);
+                var options = new JsonSerializerOptions { WriteIndented = true};
+                string json = JsonSerializer.Serialize(library, options);
                 File.WriteAllText(FILE_NAME, json);
             }
             catch { /* Ignore errors for now */ }
@@ -199,6 +199,34 @@ namespace TelHai.DotNet.PlayerProject
                 }
                 catch { }
             }
+        }
+
+
+        private void BtnSettings_Click(object sender, RoutedEventArgs e)
+        {
+
+            //create setting window instance
+            SettingsWindow settingsWin = new SettingsWindow();
+
+            // Listen for the results
+            settingsWin.OnScanCompleted += SettingsWin_OnScanCompleted;
+
+            settingsWin.ShowDialog();
+        }
+
+        private void SettingsWin_OnScanCompleted(List<MusicTrack> newTracks)
+        {
+            foreach (var track in newTracks)
+            {
+                // Prevent duplicates based on FilePath
+                if (!library.Any(x => x.FilePath == track.FilePath))
+                {
+                    library.Add(track);
+                }
+            }
+
+            UpdateLibraryUI();
+            SaveLibrary();
         }
     }
 }
