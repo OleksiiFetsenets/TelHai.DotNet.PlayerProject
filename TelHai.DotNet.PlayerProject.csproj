@@ -8,4 +8,12 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="Images\music_note.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Images\music_note.png" />
+  </ItemGroup>
+
 </Project>

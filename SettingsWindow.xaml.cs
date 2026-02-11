@@ -2,22 +2,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Linq; // Required for .ToList()
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
+using TelHai.DotNet.PlayerProject.Models; // <--- ADD THIS
 
 namespace TelHai.DotNet.PlayerProject
 {
-    /// <summary>
-    /// Interaction logic for SettingsWindow.xaml
-    /// </summary>
     public partial class SettingsWindow : Window
     {
         private AppSettings currentSettings;
@@ -28,7 +18,7 @@ namespace TelHai.DotNet.PlayerProject
         public SettingsWindow()
         {
             InitializeComponent();
-            currentSettings = AppSettings.Load();
+            currentSettings = AppSettings.Load(); // Load saved folders
             RefreshFolderList();
         }
 
@@ -38,18 +28,21 @@ namespace TelHai.DotNet.PlayerProject
             lstFolders.ItemsSource = currentSettings.MusicFolders;
         }
 
-        // Placeholders to make it build
         private void BtnAddFolder_Click(object sender, RoutedEventArgs e)
         {
+            // NOTE: If OpenFolderDialog gives an error, use "OpenFileDialog" 
+            // or ensure you are using .NET 8 / latest WPF.
             OpenFolderDialog dialog = new OpenFolderDialog();
+            dialog.Title = "Select Music Folder";
 
             if (dialog.ShowDialog() == true)
             {
                 string folder = dialog.FolderName;
+                // Prevent duplicates
                 if (!currentSettings.MusicFolders.Contains(folder))
                 {
                     currentSettings.MusicFolders.Add(folder);
-                    AppSettings.Save(currentSettings);
+                    AppSettings.Save(currentSettings); // Save immediately
                     RefreshFolderList();
                 }
             }
@@ -60,19 +53,21 @@ namespace TelHai.DotNet.PlayerProject
             if (lstFolders.SelectedItem is string folder)
             {
                 currentSettings.MusicFolders.Remove(folder);
-                AppSettings.Save(currentSettings);
+                AppSettings.Save(currentSettings); // Save changes
                 RefreshFolderList();
             }
         }
+
         private void BtnScan_Click(object sender, RoutedEventArgs e)
         {
             List<MusicTrack> foundTracks = new List<MusicTrack>();
 
+            // 1. Loop through ALL folders
             foreach (string folderPath in currentSettings.MusicFolders)
             {
                 if (Directory.Exists(folderPath))
                 {
-                    // SearchOption.AllDirectories makes it scan sub-folders
+                    // Scan files in this folder
                     string[] files = Directory.GetFiles(folderPath, "*.mp3", SearchOption.AllDirectories);
 
                     foreach (string file in files)
@@ -83,16 +78,14 @@ namespace TelHai.DotNet.PlayerProject
                             FilePath = file
                         });
                     }
-
-                    OnScanCompleted?.Invoke(foundTracks);
-
-                    MessageBox.Show($"Scan Complete! Found {foundTracks.Count} songs.");
-                    this.Close();
                 }
-
             }
+
+            // 2. NOW we are done scanning all folders, send the data back
+            OnScanCompleted?.Invoke(foundTracks);
+
+            MessageBox.Show($"Scan Complete! Found {foundTracks.Count} songs.");
+            this.Close();
         }
-
     }
-
 }
