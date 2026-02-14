@@ -25,9 +25,13 @@ namespace TelHai.DotNet.PlayerProject
         private bool isDragging = false;
         private const string FILE_NAME = "library.json";
 
+        // Slideshow variables
+        private int _slideshowIndex = 0;
+        private int _slideshowTickCounter = 0;
+
         //Services
         private readonly ItunesService _itunesService = new ItunesService();
-        private CancellationTokenSource ? _cts;
+        private CancellationTokenSource? _cts;
 
         public MusicPlayer()
         {
@@ -48,26 +52,11 @@ namespace TelHai.DotNet.PlayerProject
         {
             if (lstLibrary.SelectedItem is MusicTrack track)
             {
-                // Basic info
-                txtTitle.Text = track.Title;
-                txtPath.Text = track.FilePath;
+                // Stop any previous search
+                _cts?.Cancel();
 
-                // If we already have API data saved, show it immediately
-                if (track.IsDataLoaded)
-                {
-                    txtArtist.Text = track.Artist;
-                    txtAlbum.Text = track.Album;
-                    if (!string.IsNullOrEmpty(track.AlbumArtUrl))
-                        imgAlbumArt.Source = new BitmapImage(new Uri(track.AlbumArtUrl));
-                }
-                else
-                {
-                    // Reset to default
-                    txtArtist.Text = "Unknown Artist";
-                    txtAlbum.Text = "Unknown Album";
-                    //set Note
-                    imgAlbumArt.Source = new BitmapImage(new Uri("/Images/music_note.png", UriKind.RelativeOrAbsolute));
-                }
+                // Use helper to update UI (handles images/text/slideshow reset)
+                UpdateNowPlayingUI(track);
             }
         }
 
@@ -84,17 +73,18 @@ namespace TelHai.DotNet.PlayerProject
         {
             if (lstLibrary.SelectedItem is MusicTrack track)
             {
-                PlaySong(track);
-            }
-            else if (mediaPlayer.Source != null)
-            {
-                // Just unpause
-                mediaPlayer.Play();
-                timer.Start();
-                txtStatus.Text = "Playing";
+                if (txtPath.Text == track.FilePath && mediaPlayer.Source != null)
+                {
+                    mediaPlayer.Play();
+                    timer.Start();
+                    txtStatus.Text = "Playing";
+                }
+                else
+                {
+                    PlaySong(track);
+                }
             }
         }
-
         private void PlaySong(MusicTrack track)
         {
             // 1. Play Audio
@@ -103,18 +93,24 @@ namespace TelHai.DotNet.PlayerProject
             timer.Start();
             txtStatus.Text = "Playing";
 
-            // 2. Fetch Info (Async)
-            // Cancel old search
-            _cts?.Cancel();
-            _cts = new CancellationTokenSource();
+            // Update UI immediately using local data
+            UpdateNowPlayingUI(track);
 
-            // Set UI to loading state
-            txtTitle.Text = track.Title;
-            txtPath.Text = track.FilePath;
-            txtStatus.Text = "Searching iTunes...";
+            // 2. Fetch Info (Async) ONLY if not loaded yet
+            if (!track.IsDataLoaded)
+            {
+                // Cancel old search
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
 
-            // Fire and forget (Async void pattern is okay for event handlers/top level)
-            _ = LoadSongInfoAsync(track, _cts.Token);
+                txtStatus.Text = "Searching iTunes...";
+                // Fire and forget
+                _ = LoadSongInfoAsync(track, _cts.Token);
+            }
+            else
+            {
+                txtStatus.Text = "Playing (Local Data)";
+            }
         }
 
         private async Task LoadSongInfoAsync(MusicTrack track, CancellationToken token)
@@ -128,9 +124,8 @@ namespace TelHai.DotNet.PlayerProject
                     Dispatcher.Invoke(() =>
                     {
                         txtStatus.Text = "No info found (Offline)";
-                        imgAlbumArt.Source = new BitmapImage(new Uri("/Images/music_note.png", UriKind.RelativeOrAbsolute));
-                        txtArtist.Text = "Unknown Artist";
-                        txtAlbum.Text = "Unknown Album";
+                        // Don't overwrite if user has custom data
+                        if (!track.IsDataLoaded) SetImage("pack://application:,,,/Images/music_note.png");
                     });
                     return;
                 }
@@ -138,21 +133,17 @@ namespace TelHai.DotNet.PlayerProject
                 // Update UI (must be on UI thread)
                 Dispatcher.Invoke(() =>
                 {
-                    txtTitle.Text = info.TrackName;
-                    txtArtist.Text = info.ArtistName;
-                    txtAlbum.Text = info.AlbumName;
-                    txtStatus.Text = "Playing (Info Loaded)";
-
-                    if (!string.IsNullOrWhiteSpace(info.ArtworkUrl))
-                    {
-                        imgAlbumArt.Source = new BitmapImage(new Uri(info.ArtworkUrl));
-                    }
-
                     // Save to object
                     track.Artist = info.ArtistName ?? "Unknown Artist";
                     track.Album = info.AlbumName ?? "Unknown Album";
                     track.AlbumArtUrl = info.ArtworkUrl ?? "/Images/music_note.png";
                     track.IsDataLoaded = true;
+
+                    UpdateNowPlayingUI(track);
+                    txtStatus.Text = "Info Loaded & Saved";
+
+                    // Save to JSON (Requirement)
+                    SaveLibrary();
                 });
             }
             catch (OperationCanceledException)
@@ -194,13 +185,32 @@ namespace TelHai.DotNet.PlayerProject
         // Timer_Tick updates slider and timers for song
         private void Timer_Tick(object? sender, EventArgs e)
         {
-            if (mediaPlayer.Source != null && mediaPlayer.NaturalDuration.HasTimeSpan && !isDragging)
+            if (mediaPlayer.Source != null && mediaPlayer.NaturalDuration.HasTimeSpan)
             {
-                sliderProgress.Maximum = mediaPlayer.NaturalDuration.TimeSpan.TotalSeconds;
-                sliderProgress.Value = mediaPlayer.Position.TotalSeconds;
+                if (!isDragging)
+                {
+                    sliderProgress.Maximum = mediaPlayer.NaturalDuration.TimeSpan.TotalSeconds;
+                    sliderProgress.Value = mediaPlayer.Position.TotalSeconds;
 
-                txtCurrentTime.Text = mediaPlayer.Position.ToString(@"mm\:ss");
-                txtTotalTime.Text = mediaPlayer.NaturalDuration.TimeSpan.ToString(@"mm\:ss");
+                    txtCurrentTime.Text = mediaPlayer.Position.ToString(@"mm\:ss");
+                    txtTotalTime.Text = mediaPlayer.NaturalDuration.TimeSpan.ToString(@"mm\:ss");
+                }
+
+                // Slideshow Logic
+                if (lstLibrary.SelectedItem is MusicTrack currentTrack && currentTrack.Images.Count > 1)
+                {
+                    _slideshowTickCounter++;
+                    if (_slideshowTickCounter >= 6) // 3 seconds
+                    {
+                        _slideshowTickCounter = 0;
+                        _slideshowIndex++;
+
+                        if (_slideshowIndex >= currentTrack.Images.Count)
+                            _slideshowIndex = 0;
+
+                        SetImage(currentTrack.Images[_slideshowIndex]);
+                    }
+                }
             }
         }
 
@@ -301,6 +311,70 @@ namespace TelHai.DotNet.PlayerProject
             }
             UpdateLibraryUI();
             SaveLibrary();
+        }
+
+        // NEW HELPERS FOR EDITING
+
+        private void BtnEdit_Click(object sender, RoutedEventArgs e)
+        {
+            if (lstLibrary.SelectedItem is MusicTrack track)
+            {
+                SongEditorWindow editor = new SongEditorWindow(track);
+                editor.ShowDialog();
+
+                SaveLibrary();
+                UpdateLibraryUI();
+
+                if (txtPath.Text == track.FilePath)
+                {
+                    UpdateNowPlayingUI(track);
+                }
+            }
+            else
+            {
+                MessageBox.Show("Please select a song to edit.");
+            }
+        }
+
+        private void UpdateNowPlayingUI(MusicTrack track)
+        {
+            txtTitle.Text = track.Title;
+            txtPath.Text = track.FilePath;
+
+            _slideshowIndex = 0;
+            _slideshowTickCounter = 0;
+
+            if (track.IsDataLoaded)
+            {
+                txtArtist.Text = track.Artist;
+                txtAlbum.Text = track.Album;
+                SetImage(GetBestImage(track));
+            }
+            else
+            {
+                txtArtist.Text = "Unknown Artist";
+                txtAlbum.Text = "Unknown Album";
+                SetImage("pack://application:,,,/Images/music_note.png");
+            }
+        }
+
+        private string GetBestImage(MusicTrack track)
+        {
+            if (track.Images.Count > 0) return track.Images[0];
+            if (!string.IsNullOrEmpty(track.AlbumArtUrl)) return track.AlbumArtUrl;
+            return "pack://application:,,,/Images/music_note.png";
+        }
+
+        private void SetImage(string uriString)
+        {
+            try
+            {
+                imgAlbumArt.Source = new BitmapImage(new Uri(uriString));
+            }
+            catch
+            {
+                try { imgAlbumArt.Source = new BitmapImage(new Uri("pack://application:,,,/Images/music_note.png")); } catch { }
+            }
         }
     }
 }
